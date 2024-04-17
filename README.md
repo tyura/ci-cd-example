@@ -1,2 +1,2 @@
 # ci-cd-sample
-Sample code Node.js CI/CD
+This is a sample of CI/CD code for a Node.js application.
