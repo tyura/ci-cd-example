@@ -1,0 +1,10 @@
+**/logs
+**/*.log
+**/.temp
+**/.cache
+**/node_modules
+**/.history
+**/.git
+**/__tests__
+**/*.test.ts
+**/src/scripts
