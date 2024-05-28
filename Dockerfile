@@ -2,20 +2,23 @@
 FROM node:20-alpine AS dependencies
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+ENV TINI_VERSION v0.19.0
+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static /tini
+RUN chmod +x /tini
+
+COPY package*.json ./
 RUN npm install --production
 
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:20-bookworm-slim as builder
 
-WORKDIR /work
-COPY . /work/
+WORKDIR /app
+COPY . /app/
 
-RUN npm install
-RUN npm run build
+RUN npm install && npm run build
 
 # Runtime stage
-FROM node:20-alpine AS runtime
+FROM gcr.io/distroless/nodejs22-debian12
 
 ENV \
   LANG="C.UTF-8" \
@@ -24,15 +27,15 @@ ENV \
   NODE_OPTIONS="--enable-source-maps"
 
 WORKDIR /app
-COPY --from=dependencies /app/node_modules ./node_modules
-COPY --from=builder /work/dist ./dist
 
-# Prevent Node.js from executing as PID1
-RUN apk add --no-cache tini
-ENTRYPOINT ["/sbin/tini", "--"]
+COPY --from=dependencies --chown=nonroot:nonroot /tini /tini
+COPY --from=dependencies --chown=nonroot:nonroot /app/node_modules ./node_modules
+COPY --from=builder --chown=nonroot:nonroot /app/dist .
 
-USER node
+USER nonroot
 
 EXPOSE 3000
 
-CMD ["node", "dist/src/main.js"]
+# Prevent Node.js from executing as PID1
+ENTRYPOINT [ "/tini", "--", "/nodejs/bin/node" ]
+CMD ["index.js"]
