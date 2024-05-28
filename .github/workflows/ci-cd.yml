@@ -46,10 +46,11 @@ jobs:
     env:
       AWS_REGION: ap-northeast-1
       ECR_REPOSITORY: development-ecr-repository
-      ECS_SERVICE: ecs_service
-      ECS_CLUSTER: ecs_cluster
-      ECS_TASK_DEFINITION: task_definitions/service.json
-      CONTAINER_NAME: container_name
+      ECS_SERVICE: ecs-service
+      ECS_CLUSTER: ecs-cluster
+      ECS_TASK_DEFINITION_FAMILY: ecs-task-definition
+      ECS_TASK_DEFINITION_FILE: task-definition.json
+      CONTAINER_NAME: container-name
 
     steps:
       - name: Checkout
@@ -64,6 +65,11 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Download task definitions
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION_FAMILY }} \
+                                           --query taskDefinition > ${{ env.ECS_TASK_DEFINITION_FILE }}
 
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
@@ -84,7 +90,7 @@ jobs:
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          task-definition: ${{ env.ECS_TASK_DEFINITION_FILE }}
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
