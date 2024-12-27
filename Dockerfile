@@ -7,7 +7,7 @@ ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-stati
 RUN chmod +x /tini
 
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev
 
 # Build stage
 FROM node:20-bookworm-slim as builder
@@ -15,7 +15,7 @@ FROM node:20-bookworm-slim as builder
 WORKDIR /app
 COPY . /app/
 
-RUN npm install && npm run build
+RUN npm ci && npm run build
 
 # Runtime stage
 FROM gcr.io/distroless/nodejs22-debian12

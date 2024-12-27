@@ -1,0 +1,109 @@
+name: Deploy to ECS
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    types:
+      - closed
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: dev
+            branch: refs/heads/develop
+            ecr_repository: dev-ecr-repository
+            ecs_service: dev-ecs-service
+            ecs_cluster: dev-cluster
+            ecs_task_definition_family: dev-task-def
+            container_name: dev-container
+          - environment: stg
+            branch: refs/heads/staging
+            ecr_repository: stg-ecr-repository
+            ecs_service: stg-ecs-service
+            ecs_cluster: stg-cluster
+            ecs_task_definition_family: stg-task-def
+            container_name: stg-container
+          - environment: prod
+            branch: refs/heads/main
+            ecr_repository: prod-ecr-repository
+            ecs_service: prod-ecs-service
+            ecs_cluster: prod-cluster
+            ecs_task_definition_family: prod-task-def
+            container_name: prod-container
+
+    environment: ${{ matrix.environment }}
+    env:
+      AWS_REGION: ap-northeast-1
+      ECS_TASK_DEFINITION_FILE: task-definition.json
+
+    steps:
+      - name: Check branch condition
+        id: branch-check
+        run: |
+          if [[ "${{ github.event.pull_request.base.ref }}" != "${{ matrix.branch }}" ]]; then
+            echo "This job is not meant for this branch. Skipping..."
+            exit 0
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.IAM_ROLE_ARN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Download task definitions
+        run: |
+          aws ecs describe-task-definition --task-definition $ECS_TASK_DEFINITION_FAMILY \
+                                           --query taskDefinition | \
+                                           jq 'del(.compatibilities, .taskDefinitionArn, .requiresAttributes, .revision, .status, .registeredAt, .registeredBy)' \
+                                           > $ECS_TASK_DEFINITION_FILE
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          BUILD_PATH: src
+        run: |
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest || true
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+                       -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+                       --cache-from $ECR_REGISTRY/$ECR_REPOSITORY:latest
+                       ./$BUILD_PATH/
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION_FILE }}
+          container-name: ${{ matrix.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ matrix.ECS_SERVICE }}
+          cluster: ${{ matrix.ECS_CLUSTER }}
+          wait-for-service-stability: true
